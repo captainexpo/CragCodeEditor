@@ -1,0 +1,519 @@
+import "raylib" as rl;
+import "stdlib" as std;
+import "ui.crag" as ui;
+import "editor.crag" as ed;
+import "pair.crag" as pair;
+
+const SCREEN_WIDTH: i32 = 1000;
+const SCREEN_HEIGHT: i32 = 700;
+let FONT_SIZE: i32 = 20;
+const DEFAULT_FONT_SIZE: i32 = 20;
+const MIN_FONT_SIZE: i32 = 10;
+const MAX_FONT_SIZE: i32 = 48;
+const FONT_SIZE_STEP: i32 = 2;
+const FONT_SPACING: f32 = 0.0;
+const FONT_PATH: str = "resources/JetBrainsMono-Regular.ttf";
+let LINE_HEIGHT: i32 = 24;
+const GUTTER_WIDTH: i32 = 56;
+const STATUS_HEIGHT: i32 = 28;
+
+const STATUS_FONT_SIZE: i32 = 16;
+const TAB_SIZE: usize = 4;
+let FILE_PATH: str = "scratch.crag";
+const MOUSE_LEFT: i32 = 0;
+
+fn measure_prefix_width(line: *ed.Line, col: usize, font: *ui.Font) -> i32 {
+    let saved: u8 = line.text[col];
+    line.text[col] = 0;
+    let w: i32 = font.measure_width(line.text, FONT_SIZE as f32, FONT_SPACING);
+    line.text[col] = saved;
+    return w;
+}
+
+fn col_for_x(line: *ed.Line, target_x: i32, font: *ui.Font) -> usize {
+    let col: usize = 0;
+    while (col < line.len) {
+        let w: i32 = measure_prefix_width(line, col, font);
+        if (w >= target_x) {
+            return col;
+        }
+        col += 1;
+    }
+    return line.len;
+}
+
+const crag_keywords: []str = {
+    "fn", "let", "const", "if", "else", "while", "for", "return", "break", "continue",
+    "struct", "enum", "union", "pub", "true", "false", "null", "import", "as",
+    "try", "catch", "switch", "case"
+};
+
+const crag_builtins: []str = {
+    "newstr", "slice", "sizeof", "offsetof", "alignof", "typeid", "typeof"
+};
+
+const crag_types: []str = {
+    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "usize",
+    "bool", "str", "void"
+};
+
+const kw_to_color: []pair.Pair::<[]str, rl.Color> = {
+    pair.new(crag_keywords, rl.Color{ r: 224, g: 110, b: 150, a: 255 }),
+    pair.new(crag_builtins, rl.Color{ r: 224, g: 110, b: 150, a: 255 }),
+    pair.new(crag_types, rl.Color{ r: 255, g: 148, b: 130, a: 255 })
+};
+
+pub fn try_get_keyword_color(s: str, colorref: *rl.Color) -> bool {
+    for (let i: usize = 0; i < kw_to_color.len; i++){
+        let p = kw_to_color[i];
+        for (let j: usize = 0; j < p.first.len; j++){
+            if (p.first[j] == s){
+                colorref.* = p.second;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+fn draw_line_highlighted(line: *ed.Line, base_x: i32, y: i32, font: *ui.Font, text_color: rl.Color, comment_color: rl.Color, string_color: rl.Color, number_color: rl.Color) -> void {
+    let i: usize = 0;
+    while (i < line.len) {
+        let start: usize = i;
+        let color: rl.Color = text_color;
+
+        if (line.text[i] == '/' && i + 1 < line.len && line.text[i + 1] == '/') {
+            i = line.len;
+            color = comment_color;
+        } else if (line.text[i] == '"' || line.text[i] == '\'') {
+            let quote: u8 = line.text[i];
+            i += 1;
+            while (i < line.len && line.text[i] != quote) {
+                if (line.text[i] == '\\' && i + 1 < line.len) {
+                    i += 1;
+                }
+                i += 1;
+            }
+            if (i < line.len) {
+                i += 1;
+            }
+            color = string_color;
+        } else if (ed.is_digit(line.text[i])) {
+            while (i < line.len && (ed.is_digit(line.text[i]) || line.text[i] == '.')) {
+                i += 1;
+            }
+            color = number_color;
+        } else if (ed.is_ident_start(line.text[i])) {
+            while (i < line.len && ed.is_ident_char(line.text[i])) {
+                i += 1;
+            }
+            let c: *rl.Color = std.cstdlib.malloc(sizeof(rl.Color)) as *rl.Color;
+            if (try_get_keyword_color(newstr(line.text + start, i - start), c)) {
+                color = c.*;
+            }
+            std.cstdlib.free(c);
+        } else {
+            i += 1;
+        }
+
+        let x_offset: i32 = measure_prefix_width(line, start, font);
+        let saved: u8 = line.text[i];
+        line.text[i] = 0;
+        font.draw_text(line.text + start, (base_x + x_offset) as f32, y as f32, FONT_SIZE as f32, FONT_SPACING, color);
+        line.text[i] = saved;
+    }
+}
+
+fn handle_editor_input(editor: *ed.Editor, ctrl_down: bool, shift_down: bool) -> void {
+    let c: i32 = ui.GetCharPressed();
+    if (c > 0 && !ctrl_down) {
+        editor.push_undo();
+    }
+    while (c > 0) {
+        if (c >= 32 && c < 127 && !ctrl_down) {
+            editor.insert_char(c as u8);
+        }
+        c = ui.GetCharPressed();
+    }
+
+    if (rl.IsKeyPressed(rl.Key:ENTER) || ui.IsKeyPressedRepeat(rl.Key:ENTER)) {
+        editor.push_undo();
+        editor.insert_newline();
+    }
+    if (rl.IsKeyPressed(rl.Key:BACKSPACE) || ui.IsKeyPressedRepeat(rl.Key:BACKSPACE)) {
+        editor.push_undo();
+        if (ctrl_down){
+            std.io.println("ctrl+backspace");
+            editor.backspace_word();
+        }
+        else
+            editor.backspace();
+    }
+    if (rl.IsKeyPressed(rl.Key:DELETE) || ui.IsKeyPressedRepeat(rl.Key:DELETE)) {
+        editor.push_undo();
+        editor.delete_forward();
+    }
+    if (rl.IsKeyPressed(rl.Key:TAB) || ui.IsKeyPressedRepeat(rl.Key:TAB)) {
+        editor.push_undo();
+        let i: usize = 0;
+        while (i < TAB_SIZE) {
+            editor.insert_char(' ');
+            i += 1;
+        }
+    }
+
+    if (rl.IsKeyPressed(rl.Key:LEFT) || ui.IsKeyPressedRepeat(rl.Key:LEFT)) {
+        if (shift_down) { editor.begin_or_keep_selection(); } else { editor.has_selection = false; }
+        if (ctrl_down)
+            editor.move_left_word();
+        else
+            editor.move_left();
+    }
+    if (rl.IsKeyPressed(rl.Key:RIGHT) || ui.IsKeyPressedRepeat(rl.Key:RIGHT)) {
+        if (shift_down) { editor.begin_or_keep_selection(); } else { editor.has_selection = false; }
+        if (ctrl_down)
+            editor.move_right_word();
+        else
+            editor.move_right();
+    }
+    if (rl.IsKeyPressed(rl.Key:UP) || ui.IsKeyPressedRepeat(rl.Key:UP)) {
+        if (shift_down) { editor.begin_or_keep_selection(); } else { editor.has_selection = false; }
+        editor.move_up();
+    }
+    if (rl.IsKeyPressed(rl.Key:DOWN) || ui.IsKeyPressedRepeat(rl.Key:DOWN)) {
+        if (shift_down) { editor.begin_or_keep_selection(); } else { editor.has_selection = false; }
+        editor.move_down();
+    }
+    if (rl.IsKeyPressed(rl.Key:HOME)) {
+        if (shift_down) { editor.begin_or_keep_selection(); } else { editor.has_selection = false; }
+        editor.move_home();
+    }
+    if (rl.IsKeyPressed(rl.Key:END)) {
+        if (shift_down) { editor.begin_or_keep_selection(); } else { editor.has_selection = false; }
+        editor.move_end();
+    }
+}
+
+fn handle_find_box(find_box: *ui.TextInput, editor: *ed.Editor, mouse_x: i32, mouse_y: i32) -> void {
+     if (rl.IsKeyPressed(rl.Key:ESCAPE)) {
+        find_box.close();
+    }
+    let fc: i32 = ui.GetCharPressed();
+    while (fc > 0) {
+        if (fc >= 32 && fc < 127) {
+            find_box.insert_char(fc as u8);
+        }
+        fc = ui.GetCharPressed();
+    }
+    if (rl.IsKeyPressed(rl.Key:BACKSPACE) || ui.IsKeyPressedRepeat(rl.Key:BACKSPACE)) {
+        find_box.backspace();
+    }
+    if (rl.IsKeyPressed(rl.Key:DELETE) || ui.IsKeyPressedRepeat(rl.Key:DELETE)) {
+        find_box.delete_forward();
+    }
+    if (rl.IsKeyPressed(rl.Key:LEFT) || ui.IsKeyPressedRepeat(rl.Key:LEFT)) {
+        find_box.move_left();
+    }
+    if (rl.IsKeyPressed(rl.Key:RIGHT) || ui.IsKeyPressedRepeat(rl.Key:RIGHT)) {
+        find_box.move_right();
+    }
+    if (rl.IsKeyPressed(rl.Key:HOME)) {
+        find_box.move_home();
+    }
+    if (rl.IsKeyPressed(rl.Key:END)) {
+        find_box.move_end();
+    }
+    if (rl.IsKeyPressed(rl.Key:ENTER) || ui.IsKeyPressedRepeat(rl.Key:ENTER)) {
+        let query: str = find_box.as_str();
+        if (query.len > 0) {
+            let mr: usize = 0;
+            let mc: usize = 0;
+            if (editor.find_next(query, editor.cursor_row, editor.cursor_col, &mr, &mc)) {
+                editor.move_cursor_to(mr, mc + query.len);
+                editor.has_selection = true;
+                editor.sel_anchor_row = mr;
+                editor.sel_anchor_col = mc;
+            }
+        }
+    }
+}
+
+pub fn main(args: []*u8) -> i32 {
+    ui.SetConfigFlags(rl.ConfigFlags:FLAG_WINDOW_RESIZABLE);
+    rl.InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Crag Editor");
+    rl.SetTargetFPS(60);
+    ui.SetExitKey(0);
+
+    let editor: ed.Editor = ed.Editor{
+        lines: null, line_count: 0, line_cap: 0,
+        cursor_row: 0, cursor_col: 0, scroll_row: 0, dirty: false,
+        has_selection: false, sel_anchor_row: 0, sel_anchor_col: 0,
+        undo_stack: null, undo_count: 0, undo_cap: 0,
+        redo_stack: null, redo_count: 0, redo_cap: 0,
+        edit_version: 0,
+    };
+
+    if (args.len > 1) {
+        let filename: *const u8 = args[1];
+        FILE_PATH = newstr(filename, std.cstring.strlen(filename));
+    }
+
+    editor.init();
+    editor.load(FILE_PATH);
+
+    let font: ui.Font = ui.Font{ handle: null };
+    font.load(FONT_PATH, FONT_SIZE);
+
+
+    let status_font: ui.Font = ui.Font{ handle: null };
+    status_font.load(FONT_PATH, STATUS_FONT_SIZE);
+
+    let find_box: ui.TextInput = ui.TextInput{ text: null, len: 0, cap: 0, cursor: 0, active: false };
+    find_box.init();
+
+    let last_activity: f64 = rl.GetTime();
+
+
+    let bg_color: rl.Color = rl.Color{ r: 24, g: 24, b: 28, a: 255 };
+    let panel_color: rl.Color = rl.Color{ r: 18, g: 18, b: 22, a: 255 };
+    let selection_color: rl.Color = rl.Color{ r: 70, g: 100, b: 150, a: 130 };
+    let text_color: rl.Color = rl.Color{ r: 226, g: 226, b: 226, a: 255 };
+    let comment_color: rl.Color = rl.Color{ r: 110, g: 122, b: 110, a: 255 };
+    let string_color: rl.Color = rl.Color{ r: 214, g: 165, b: 96, a: 255 };
+    let number_color: rl.Color = rl.Color{ r: 150, g: 190, b: 230, a: 255 };
+    let keyword_color: rl.Color = rl.Color{ r: 224, g: 110, b: 150, a: 255 };
+    let find_box_bg: rl.Color = rl.Color{ r: 34, g: 34, b: 40, a: 255 };
+    let find_box_border: rl.Color = rl.Color{ r: 90, g: 100, b: 120, a: 255 };
+
+    let gray_color: rl.Color = rl.GRAY;
+    let light_gray_color: rl.Color = rl.LIGHTGRAY;
+
+    while (!rl.WindowShouldClose()) {
+        let screen_w: i32 = rl.GetScreenWidth();
+        let screen_h: i32 = rl.GetScreenHeight();
+        let prev_cursor_row: usize = editor.cursor_row;
+        let prev_cursor_col: usize = editor.cursor_col;
+        let prev_scroll_row: usize = editor.scroll_row;
+        let prev_edit_version: usize = editor.edit_version;
+
+        let ctrl_down: bool = rl.IsKeyDown(rl.Key:LEFT_CONTROL) || rl.IsKeyDown(rl.Key:RIGHT_CONTROL);
+        let shift_down: bool = rl.IsKeyDown(rl.Key:LEFT_SHIFT) || rl.IsKeyDown(rl.Key:RIGHT_SHIFT);
+
+        if (ctrl_down && rl.IsKeyPressed(rl.Key:F)) {
+            if (find_box.active) {
+                find_box.close();
+            } else {
+                find_box.open();
+            }
+        }
+
+        if (find_box.active) {
+            handle_find_box(&find_box, &editor, rl.GetMouseX(), rl.GetMouseY());
+        } else {
+            handle_editor_input(&editor, ctrl_down, shift_down);
+        }
+
+
+        if (ctrl_down && rl.IsKeyPressed(rl.Key:A)) {
+            editor.select_all();
+        }
+        if (ctrl_down && rl.IsKeyPressed(rl.Key:C) && editor.has_selection) {
+            let t: str = editor.get_selection_text();
+            ui.SetClipboardText(t);
+            std.cstdlib.free(t.ptr as *void);
+        }
+        if (ctrl_down && rl.IsKeyPressed(rl.Key:X) && editor.has_selection) {
+            let t: str = editor.get_selection_text();
+            ui.SetClipboardText(t);
+            std.cstdlib.free(t.ptr as *void);
+            editor.push_undo();
+            editor.delete_selection();
+        }
+        if (ctrl_down && rl.IsKeyPressed(rl.Key:V)) {
+            editor.push_undo();
+            editor.paste_from_clipboard();
+        }
+        if (ctrl_down && rl.IsKeyPressed(rl.Key:Z)) {
+            editor.undo();
+        }
+        if (ctrl_down && rl.IsKeyPressed(rl.Key:Y)) {
+            editor.redo();
+        }
+        if (ctrl_down && rl.IsKeyPressed(rl.Key:S)) {
+            editor.save(FILE_PATH);
+        }
+        if (ctrl_down && rl.IsKeyPressed(rl.Key:Q)) {
+            break;
+        }
+
+        let new_font_size: i32 = FONT_SIZE;
+        if (ctrl_down && (rl.IsKeyPressed(rl.Key:EQUAL) || rl.IsKeyPressed(rl.Key:KP_ADD))) {
+            new_font_size = FONT_SIZE + FONT_SIZE_STEP;
+        }
+        if (ctrl_down && (rl.IsKeyPressed(rl.Key:MINUS) || rl.IsKeyPressed(rl.Key:KP_SUBTRACT))) {
+            new_font_size = FONT_SIZE - FONT_SIZE_STEP;
+        }
+        if (ctrl_down && (rl.IsKeyPressed(rl.Key:ZERO) || rl.IsKeyPressed(rl.Key:KP_0))) {
+            new_font_size = DEFAULT_FONT_SIZE;
+        }
+        if (new_font_size < MIN_FONT_SIZE) {
+            new_font_size = MIN_FONT_SIZE;
+        }
+        if (new_font_size > MAX_FONT_SIZE) {
+            new_font_size = MAX_FONT_SIZE;
+        }
+        if (new_font_size != FONT_SIZE) {
+            FONT_SIZE = new_font_size;
+            LINE_HEIGHT = FONT_SIZE + 4;
+            font.unload();
+            font.load(FONT_PATH, FONT_SIZE);
+        }
+
+        let mouse: rl.Vector2 = rl.GetMousePosition();
+        let text_area_bottom: f32 = (screen_h - STATUS_HEIGHT) as f32;
+        if (mouse.x >= (GUTTER_WIDTH as f32) && mouse.y >= 0.0 && mouse.y < text_area_bottom) {
+            if (rl.IsMouseButtonPressed(MOUSE_LEFT)) {
+                let clicked_row: usize = editor.scroll_row + ((mouse.y as i32) / LINE_HEIGHT) as usize;
+                if (clicked_row >= editor.line_count) {
+                    clicked_row = editor.line_count - 1;
+                }
+                let target_x: i32 = (mouse.x as i32) - GUTTER_WIDTH - 8;
+                let clicked_col: usize = col_for_x(editor.lines + clicked_row, target_x, &font);
+
+                if (shift_down) {
+                    editor.begin_or_keep_selection();
+                } else {
+                    editor.has_selection = false;
+                    editor.sel_anchor_row = clicked_row;
+                    editor.sel_anchor_col = clicked_col;
+                }
+                editor.cursor_row = clicked_row;
+                editor.cursor_col = clicked_col;
+            } else if (rl.IsMouseButtonDown(MOUSE_LEFT)) {
+                let clicked_row: usize = editor.scroll_row + ((mouse.y as i32) / LINE_HEIGHT) as usize;
+                if (clicked_row >= editor.line_count) {
+                    clicked_row = editor.line_count - 1;
+                }
+                let target_x: i32 = (mouse.x as i32) - GUTTER_WIDTH - 8;
+                let clicked_col: usize = col_for_x(editor.lines + clicked_row, target_x, &font);
+
+                if (clicked_row != editor.sel_anchor_row || clicked_col != editor.sel_anchor_col) {
+                    editor.has_selection = true;
+                }
+                editor.cursor_row = clicked_row;
+                editor.cursor_col = clicked_col;
+            }
+        }
+
+        let wheel: f32 = ui.GetMouseWheelMove();
+        if (wheel > 0) {
+            let amount: usize = (wheel * 3) as usize;
+            if (amount > editor.scroll_row) {
+                editor.scroll_row = 0;
+            } else {
+                editor.scroll_row -= amount;
+            }
+        } else if (wheel < 0) {
+            let amount: usize = ((-wheel) * 3) as usize;
+            editor.scroll_row += amount;
+            if (editor.scroll_row > editor.line_count - 1) {
+                editor.scroll_row = editor.line_count - 1;
+            }
+        }
+
+        let visible_lines: usize = ((screen_h - STATUS_HEIGHT) / LINE_HEIGHT) as usize;
+        if (editor.cursor_row < editor.scroll_row) {
+            editor.cursor_row = editor.scroll_row;
+            //editor.scroll_row = editor.cursor_row;
+        }
+        if (editor.cursor_row >= editor.scroll_row + visible_lines) {
+            editor.cursor_row = editor.scroll_row + visible_lines;
+            //editor.scroll_row = editor.cursor_row - visible_lines + 1;
+        }
+
+        let interacted: bool = editor.cursor_row != prev_cursor_row || editor.cursor_col != prev_cursor_col
+            || editor.scroll_row != prev_scroll_row || editor.edit_version != prev_edit_version;
+        if (interacted) {
+            last_activity = rl.GetTime();
+        }
+
+        // Solid for 0.5s after any interaction, then blinks
+        let idle: f64 = rl.GetTime() - last_activity;
+        let show_cursor: bool = idle < 0.5 || (((idle - 0.5) * 2.0) as i64) % 2 == 0;
+
+        let sel_sr: usize = 0;
+        let sel_sc: usize = 0;
+        let sel_er: usize = 0;
+        let sel_ec: usize = 0;
+        if (editor.has_selection) {
+            editor.selection_bounds(&sel_sr, &sel_sc, &sel_er, &sel_ec);
+        }
+
+        rl.BeginDrawing();
+        rl.ClearBackground(bg_color);
+        rl.DrawRectangle(0, 0, GUTTER_WIDTH, screen_h - STATUS_HEIGHT, panel_color);
+
+        let row: usize = editor.scroll_row;
+        let y: i32 = 0;
+        while (row < editor.line_count && y < screen_h - STATUS_HEIGHT) {
+            let line: *ed.Line = editor.lines + row;
+
+            let num_str: str = std.string.tostring(row + 1);
+            let num_w: i32 = font.measure_width(num_str, FONT_SIZE as f32, FONT_SPACING);
+            font.draw_text(num_str, (GUTTER_WIDTH - 8 - num_w) as f32, y as f32, FONT_SIZE as f32, FONT_SPACING, gray_color);
+
+            if (editor.has_selection && row >= sel_sr && row <= sel_er) {
+                let from_col: usize = 0;
+                let to_col: usize = line.len;
+                if (row == sel_sr) {
+                    from_col = sel_sc;
+                }
+                if (row == sel_er) {
+                    to_col = sel_ec;
+                }
+                let from_x: i32 = measure_prefix_width(line, from_col, &font);
+                let to_x: i32 = measure_prefix_width(line, to_col, &font);
+                let hl_w: i32 = to_x - from_x;
+                if (hl_w < 4) {
+                    hl_w = 4;
+                }
+                rl.DrawRectangle(GUTTER_WIDTH + 8 + from_x, y, hl_w, LINE_HEIGHT, selection_color);
+            }
+
+            draw_line_highlighted(line, GUTTER_WIDTH + 8, y, &font, text_color, comment_color, string_color, number_color);
+
+            if (row == editor.cursor_row && show_cursor) {
+                let prefix_w: i32 = measure_prefix_width(line, editor.cursor_col, &font);
+                let cx: i32 = GUTTER_WIDTH + 8 + prefix_w;
+                rl.DrawRectangle(cx, y, 2, LINE_HEIGHT - 2, rl.YELLOW);
+            }
+
+            row += 1;
+            y += LINE_HEIGHT;
+        }
+
+        rl.DrawRectangle(0, screen_h - STATUS_HEIGHT, screen_w, STATUS_HEIGHT, panel_color);
+
+        let dirty_marker: str = "";
+        if (editor.dirty) {
+            dirty_marker = "*";
+        }
+        let status: str = FILE_PATH + dirty_marker + "   Ln " + std.string.tostring(editor.cursor_row + 1) + ", Col " + std.string.tostring(editor.cursor_col + 1) + "   Ctrl+S save  Ctrl+Z/Y undo/redo  Ctrl+C/X/V copy/cut/paste  Ctrl+-/= font size  Ctrl+F find";
+        status_font.draw_text(status, 8, (screen_h - STATUS_HEIGHT + 6) as f32, STATUS_FONT_SIZE as f32, FONT_SPACING, light_gray_color);
+
+        if (find_box.active) {
+            let box_w: f32 = 320.0;
+            let box_h: f32 = (STATUS_FONT_SIZE + 16) as f32;
+            let box_x: f32 = (screen_w as f32) - box_w - 16.0;
+            let box_y: f32 = 16.0;
+            find_box.draw(&status_font, box_x, box_y, box_w, box_h, "Find: ", find_box_bg, find_box_border, text_color, rl.YELLOW, STATUS_FONT_SIZE as f32, FONT_SPACING, show_cursor);
+        }
+
+        rl.EndDrawing();
+    }
+
+    font.unload();
+    status_font.unload();
+    rl.CloseWindow();
+    return 0;
+}

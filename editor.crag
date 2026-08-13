@@ -1,0 +1,678 @@
+import "stdlib" as std;
+import "ui.crag" as ui;
+
+pub struct Line {
+    text: *u8,
+    len: usize,
+    cap: usize,
+
+    fn init(self: *Line) -> void {
+        self.cap = 16;
+        self.len = 0;
+        self.text = std.cstdlib.malloc(self.cap) as *u8;
+        self.text[0] = 0;
+    }
+
+    fn ensure_capacity(self: *Line, needed: usize) -> void {
+        if (needed < self.cap) {
+            return;
+        }
+        let new_cap: usize = self.cap;
+        while (new_cap <= needed) {
+            new_cap *= 2;
+        }
+        self.text = std.cstdlib.realloc(self.text as *void, new_cap) as *u8;
+        self.cap = new_cap;
+    }
+
+    fn insert_char(self: *Line, col: usize, ch: u8) -> void {
+        self.ensure_capacity(self.len + 2);
+        std.cstring.memmove((self.text + col + 1) as *void, (self.text + col) as *void, self.len - col + 1);
+        self.text[col] = ch;
+        self.len += 1;
+    }
+
+    fn delete_char(self: *Line, col: usize) -> void {
+        std.cstring.memmove((self.text + col) as *void, (self.text + col + 1) as *void, self.len - col);
+        self.len -= 1;
+    }
+
+    // Removes [start, end). Used for same-line selection deletes.
+    fn delete_range(self: *Line, start: usize, end: usize) -> void {
+        if (end <= start) {
+            return;
+        }
+        std.cstring.memmove((self.text + start) as *void, (self.text + end) as *void, self.len - end + 1);
+        self.len -= (end - start);
+    }
+
+    fn split_at(self: *Line, col: usize) -> Line {
+        let tail_len: usize = self.len - col;
+        let tail: Line = Line{ text: null, len: 0, cap: 0 };
+        tail.init();
+        tail.ensure_capacity(tail_len + 1);
+        std.cstring.memcpy(tail.text as *void, (self.text + col) as *void, tail_len);
+        tail.len = tail_len;
+        tail.text[tail_len] = 0;
+
+        self.len = col;
+        self.text[col] = 0;
+        return tail;
+    }
+
+    // Consumes `other`: frees its buffer once merged, since callers only ever
+    // pass in a Line that was just removed from the editor's line array.
+    fn append_text(self: *Line, other: *Line) -> void {
+        self.ensure_capacity(self.len + other.len + 1);
+        if (other.len > 0) {
+            std.cstring.memcpy((self.text + self.len) as *void, other.text as *void, other.len);
+        }
+        self.len += other.len;
+        self.text[self.len] = 0;
+        other.free();
+    }
+
+    fn free(self: *Line) -> void {
+        if (self.text != null) {
+            std.cstdlib.free(self.text as *void);
+            self.text = null;
+        }
+        self.len = 0;
+        self.cap = 0;
+    }
+}
+
+pub fn bytes_eq_str(ptr: *u8, len: usize, s: str) -> bool {
+    if (len != s.len) {
+        return false;
+    }
+    let i: usize = 0;
+    while (i < len) {
+        if (ptr[i] != s[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+pub fn is_digit(c: u8) -> bool {
+    return c >= '0' && c <= '9';
+}
+
+pub fn is_ident_start(c: u8) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+pub fn is_ident_char(c: u8) -> bool {
+    return is_ident_start(c) || is_digit(c);
+}
+
+pub fn line_from_range(ptr: *u8, start: usize, end: usize) -> Line {
+    let l: Line = Line{ text: null, len: 0, cap: 0 };
+    l.init();
+    let seg_len: usize = end - start;
+    if (seg_len > 0) {
+        l.ensure_capacity(seg_len + 1);
+        std.cstring.memcpy(l.text as *void, (ptr + start) as *void, seg_len);
+        l.len = seg_len;
+        l.text[seg_len] = 0;
+    }
+    return l;
+}
+
+// Naive forward substring search within a single line, starting at
+// start_col. O(n*m), which is fine for a line at a time in an editor this
+// size.
+fn line_find(line: *Line, query: *u8, query_len: usize, start_col: usize, out_col: *usize) -> bool {
+    if (query_len == 0 || line.len < query_len) {
+        return false;
+    }
+    let col: usize = start_col;
+    while (col + query_len <= line.len) {
+        let matched: bool = true;
+        let k: usize = 0;
+        while (k < query_len) {
+            if (line.text[col + k] != query[k]) {
+                matched = false;
+            }
+            k += 1;
+        }
+        if (matched) {
+            out_col.* = col;
+            return true;
+        }
+        col += 1;
+    }
+    return false;
+}
+
+pub struct Editor {
+    lines: *Line,
+    line_count: usize,
+    line_cap: usize,
+    cursor_row: usize,
+    cursor_col: usize,
+    scroll_row: usize,
+    dirty: bool,
+
+    has_selection: bool,
+    sel_anchor_row: usize,
+    sel_anchor_col: usize,
+
+    undo_stack: *str,
+    undo_count: usize,
+    undo_cap: usize,
+    redo_stack: *str,
+    redo_count: usize,
+    redo_cap: usize,
+
+    // Bumped on every content mutation so main() can tell whether a frame's
+    // input actually changed anything, without diffing the whole buffer.
+    edit_version: usize,
+
+    fn init(self: *Editor) -> void {
+        self.line_cap = 16;
+        self.line_count = 0;
+        self.lines = std.cstdlib.malloc(self.line_cap * sizeof(Line)) as *Line;
+        self.cursor_row = 0;
+        self.cursor_col = 0;
+        self.edit_version = 0;
+        self.scroll_row = 0;
+        self.dirty = false;
+
+        self.has_selection = false;
+        self.sel_anchor_row = 0;
+        self.sel_anchor_col = 0;
+
+        self.undo_cap = 32;
+        self.undo_stack = std.cstdlib.malloc(self.undo_cap * sizeof(str)) as *str;
+        self.undo_count = 0;
+        self.redo_cap = 32;
+        self.redo_stack = std.cstdlib.malloc(self.redo_cap * sizeof(str)) as *str;
+        self.redo_count = 0;
+
+        let first: Line = Line{ text: null, len: 0, cap: 0 };
+        first.init();
+        self.insert_line_at(0, first);
+    }
+
+    fn ensure_line_capacity(self: *Editor) -> void {
+        if (self.line_count < self.line_cap) {
+            return;
+        }
+        self.line_cap *= 2;
+        self.lines = std.cstdlib.realloc(self.lines as *void, self.line_cap * sizeof(Line)) as *Line;
+    }
+
+    fn insert_line_at(self: *Editor, idx: usize, line: Line) -> void {
+        self.ensure_line_capacity();
+        let i: usize = self.line_count;
+        while (i > idx) {
+            self.lines[i] = self.lines[i - 1];
+            i -= 1;
+        }
+        self.lines[idx] = line;
+        self.line_count += 1;
+    }
+
+    fn remove_line_at(self: *Editor, idx: usize) -> Line {
+        let removed: Line = self.lines[idx];
+        let i: usize = idx;
+        while (i < self.line_count - 1) {
+            self.lines[i] = self.lines[i + 1];
+            i += 1;
+        }
+        self.line_count -= 1;
+        return removed;
+    }
+
+    fn current_line(self: *Editor) -> *Line {
+        return self.lines + self.cursor_row;
+    }
+
+    fn current_char(self: *Editor) -> u8 {
+        let line = self.current_line();
+        return line.text[self.cursor_col];
+    }
+
+    // Whole-buffer text, lines joined with '\n'. Shared by save() and the
+    // undo/redo snapshotting (both just need a flat serialization).
+    fn to_text(self: *Editor) -> str {
+        let total: usize = 0;
+        let i: usize = 0;
+        while (i < self.line_count) {
+            total += self.lines[i].len;
+            if (i < self.line_count - 1) {
+                total += 1;
+            }
+            i += 1;
+        }
+
+        let buf: *u8 = std.cstdlib.malloc(total + 1) as *u8;
+        let offset: usize = 0;
+        i = 0;
+        while (i < self.line_count) {
+            let line = self.lines[i];
+            if (line.len > 0) {
+                std.cstring.memcpy((buf + offset) as *void, line.text as *void, line.len);
+            }
+            offset += line.len;
+            if (i < self.line_count - 1) {
+                buf[offset] = '\n';
+                offset += 1;
+            }
+            i += 1;
+        }
+        buf[total] = 0;
+        return newstr(buf, total);
+    }
+
+    // Replaces the whole buffer with `text`, split on '\n'. Shared by load()
+    // and undo/redo restore.
+    fn set_content(self: *Editor, text: str) -> void {
+        self.edit_version += 1;
+        let i: usize = 0;
+        while (i < self.line_count) {
+            self.lines[i].free();
+            i += 1;
+        }
+        self.line_count = 0;
+
+        let start: usize = 0;
+        let insert_idx: usize = 0;
+        i = 0;
+        while (i < text.len) {
+            if (text[i] == '\n') {
+                self.insert_line_at(insert_idx, line_from_range(text.ptr as *u8, start, i));
+                insert_idx += 1;
+                start = i + 1;
+            }
+            i += 1;
+        }
+        self.insert_line_at(insert_idx, line_from_range(text.ptr as *u8, start, text.len));
+
+        self.cursor_row = 0;
+        self.cursor_col = 0;
+        self.has_selection = false;
+    }
+
+    fn load(self: *Editor, path: str) -> void {
+        let result = std.fs.read_all_str(path);
+        if (result.is_err) {
+            return;
+        }
+        self.set_content(result.ok);
+    }
+
+    fn save(self: *Editor, path: str) -> bool {
+        let data: str = self.to_text();
+        let result = std.fs.write_str(path, data);
+        std.cstdlib.free(data.ptr as *void);
+        if (result.is_err) {
+            return false;
+        }
+        self.dirty = false;
+        return true;
+    }
+
+    fn push_undo(self: *Editor) -> void {
+        if (self.undo_count >= self.undo_cap) {
+            self.undo_cap *= 2;
+            self.undo_stack = std.cstdlib.realloc(self.undo_stack as *void, self.undo_cap * sizeof(str)) as *str;
+        }
+        self.undo_stack[self.undo_count] = self.to_text();
+        self.undo_count += 1;
+
+        let i: usize = 0;
+        while (i < self.redo_count) {
+            std.cstdlib.free(self.redo_stack[i].ptr as *void);
+            i += 1;
+        }
+        self.redo_count = 0;
+    }
+
+    fn undo(self: *Editor) -> void {
+        if (self.undo_count == 0) {
+            return;
+        }
+        if (self.redo_count >= self.redo_cap) {
+            self.redo_cap *= 2;
+            self.redo_stack = std.cstdlib.realloc(self.redo_stack as *void, self.redo_cap * sizeof(str)) as *str;
+        }
+        self.redo_stack[self.redo_count] = self.to_text();
+        self.redo_count += 1;
+
+        self.undo_count -= 1;
+        let snapshot: str = self.undo_stack[self.undo_count];
+        self.set_content(snapshot);
+        std.cstdlib.free(snapshot.ptr as *void);
+        self.dirty = true;
+        self.edit_version += 1;
+    }
+
+    fn redo(self: *Editor) -> void {
+        if (self.redo_count == 0) {
+            return;
+        }
+        if (self.undo_count >= self.undo_cap) {
+            self.undo_cap *= 2;
+            self.undo_stack = std.cstdlib.realloc(self.undo_stack as *void, self.undo_cap * sizeof(str)) as *str;
+        }
+        self.undo_stack[self.undo_count] = self.to_text();
+        self.undo_count += 1;
+
+        self.redo_count -= 1;
+        let snapshot: str = self.redo_stack[self.redo_count];
+        self.set_content(snapshot);
+        std.cstdlib.free(snapshot.ptr as *void);
+        self.dirty = true;
+        self.edit_version += 1;
+    }
+
+    fn begin_or_keep_selection(self: *Editor) -> void {
+        if (!self.has_selection) {
+            self.sel_anchor_row = self.cursor_row;
+            self.sel_anchor_col = self.cursor_col;
+            self.has_selection = true;
+        }
+    }
+
+    fn select_all(self: *Editor) -> void {
+        self.sel_anchor_row = 0;
+        self.sel_anchor_col = 0;
+        self.cursor_row = self.line_count - 1;
+        self.cursor_col = self.lines[self.cursor_row].len;
+        self.has_selection = true;
+    }
+
+    fn selection_bounds(self: *Editor, start_row: *usize, start_col: *usize, end_row: *usize, end_col: *usize) -> void {
+        if (self.cursor_row < self.sel_anchor_row || (self.cursor_row == self.sel_anchor_row && self.cursor_col < self.sel_anchor_col)) {
+            start_row.* = self.cursor_row;
+            start_col.* = self.cursor_col;
+            end_row.* = self.sel_anchor_row;
+            end_col.* = self.sel_anchor_col;
+        } else {
+            start_row.* = self.sel_anchor_row;
+            start_col.* = self.sel_anchor_col;
+            end_row.* = self.cursor_row;
+            end_col.* = self.cursor_col;
+        }
+    }
+
+    fn delete_selection(self: *Editor) -> void {
+        if (!self.has_selection) {
+            return;
+        }
+        self.edit_version += 1;
+        let sr: usize = 0;
+        let sc: usize = 0;
+        let er: usize = 0;
+        let ec: usize = 0;
+        self.selection_bounds(&sr, &sc, &er, &ec);
+
+        if (sr == er) {
+            let only_line: *Line = self.lines + sr;
+            only_line.delete_range(sc, ec);
+        } else {
+            let last: Line = self.remove_line_at(er);
+            let tail: Line = last.split_at(ec);
+            last.free();
+
+            let i: usize = er - 1;
+            while (i > sr) {
+                let mid: Line = self.remove_line_at(i);
+                mid.free();
+                i -= 1;
+            }
+
+            let first: *Line = self.lines + sr;
+            first.delete_range(sc, first.len);
+            first.append_text(&tail);
+        }
+
+        self.cursor_row = sr;
+        self.cursor_col = sc;
+        self.has_selection = false;
+        self.dirty = true;
+        self.edit_version += 1;
+    }
+
+    fn get_selection_text(self: *Editor) -> str {
+        let sr: usize = 0;
+        let sc: usize = 0;
+        let er: usize = 0;
+        let ec: usize = 0;
+        self.selection_bounds(&sr, &sc, &er, &ec);
+
+        let total: usize = 0;
+        let r: usize = sr;
+        while (r <= er) {
+            let line: *Line = self.lines + r;
+            let from: usize = 0;
+            let to: usize = line.len;
+            if (r == sr) {
+                from = sc;
+            }
+            if (r == er) {
+                to = ec;
+            }
+            total += to - from;
+            if (r < er) {
+                total += 1;
+            }
+            r += 1;
+        }
+
+        let buf: *u8 = std.cstdlib.malloc(total + 1) as *u8;
+        let offset: usize = 0;
+        r = sr;
+        while (r <= er) {
+            let line: *Line = self.lines + r;
+            let from: usize = 0;
+            let to: usize = line.len;
+            if (r == sr) {
+                from = sc;
+            }
+            if (r == er) {
+                to = ec;
+            }
+            let seg: usize = to - from;
+            if (seg > 0) {
+                std.cstring.memcpy((buf + offset) as *void, (line.text + from) as *void, seg);
+            }
+            offset += seg;
+            if (r < er) {
+                buf[offset] = '\n';
+                offset += 1;
+            }
+            r += 1;
+        }
+        buf[total] = 0;
+        return newstr(buf, total);
+    }
+
+    fn paste_from_clipboard(self: *Editor) -> void {
+        let text: *const u8 = ui.GetClipboardText();
+        if (text == null) {
+            return;
+        }
+        if (self.has_selection) {
+            self.delete_selection();
+        }
+        let len: usize = std.cstring.strlen(text);
+        let i: usize = 0;
+        while (i < len) {
+            let ch: u8 = text[i];
+            if (ch == '\n') {
+                self.insert_newline();
+            } else if (ch != '\r') {
+                self.insert_char(ch);
+            }
+            i += 1;
+        }
+    }
+
+    fn insert_char(self: *Editor, ch: u8) -> void {
+        if (self.has_selection) {
+            self.delete_selection();
+        }
+        self.current_line().insert_char(self.cursor_col, ch);
+        self.cursor_col += 1;
+        self.dirty = true;
+        self.edit_version += 1;
+    }
+
+    fn insert_newline(self: *Editor) -> void {
+        if (self.has_selection) {
+            self.delete_selection();
+        }
+        let tail: Line = self.current_line().split_at(self.cursor_col);
+        self.insert_line_at(self.cursor_row + 1, tail);
+        self.cursor_row += 1;
+        self.cursor_col = 0;
+        self.dirty = true;
+        self.edit_version += 1;
+    }
+
+    fn backspace(self: *Editor) -> void {
+        if (self.has_selection) {
+            self.delete_selection();
+            return;
+        }
+        if (self.cursor_col > 0) {
+            self.current_line().delete_char(self.cursor_col - 1);
+            self.cursor_col -= 1;
+            self.dirty = true;
+            self.edit_version += 1;
+        } else if (self.cursor_row > 0) {
+            let removed: Line = self.remove_line_at(self.cursor_row);
+            self.cursor_row -= 1;
+            self.cursor_col = self.current_line().len;
+            self.current_line().append_text(&removed);
+            self.dirty = true;
+            self.edit_version += 1;
+        }
+    }
+
+    fn backspace_word(self: *Editor) -> void {
+        // TODO: Implement this
+        self.backspace();
+    }
+
+    fn delete_forward(self: *Editor) -> void {
+        if (self.has_selection) {
+            self.delete_selection();
+            return;
+        }
+        let line: *Line = self.current_line();
+        if (self.cursor_col < line.len) {
+            line.delete_char(self.cursor_col);
+            self.dirty = true;
+            self.edit_version += 1;
+        } else if (self.cursor_row < self.line_count - 1) {
+            let removed: Line = self.remove_line_at(self.cursor_row + 1);
+            self.current_line().append_text(&removed);
+            self.dirty = true;
+            self.edit_version += 1;
+        }
+    }
+
+    fn move_cursor_to(self: *Editor, row: usize, col: usize) -> void {
+        self.cursor_row = std.math.clamp(row, 0 as usize, (self.line_count - 1) as usize);
+        let line_len: usize = self.current_line().len;
+        self.cursor_col = std.math.clamp(col, 0 as usize, line_len);
+        self.scroll_row = self.cursor_row;
+    }
+
+    fn clamp_col(self: *Editor) -> void {
+        let len: usize = self.lines[self.cursor_row].len;
+        if (self.cursor_col > len) {
+            self.cursor_col = len;
+        }
+    }
+
+    fn move_left(self: *Editor) -> void {
+        if (self.cursor_col > 0) {
+            self.cursor_col -= 1;
+        } else if (self.cursor_row > 0) {
+            self.cursor_row -= 1;
+            self.cursor_col = self.lines[self.cursor_row].len;
+        }
+    }
+
+    fn move_left_word(self: *Editor) -> void {
+        self.move_left();
+        while (self.cursor_col > 0){
+            let c = self.current_char();
+            if (('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z'))
+                self.move_left();
+            else break;
+        }
+    }
+
+    fn move_right(self: *Editor) -> void {
+        let len: usize = self.lines[self.cursor_row].len;
+        if (self.cursor_col < len) {
+            self.cursor_col += 1;
+        } else if (self.cursor_row < self.line_count - 1) {
+            self.cursor_row += 1;
+            self.cursor_col = 0;
+        }
+    }
+
+    fn move_right_word(self: *Editor) -> void {
+        self.move_right();
+        let len: usize = self.lines[self.cursor_row].len;
+        while (self.cursor_col < len){
+            let c = self.current_char();
+            if (('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z'))
+                self.move_right();
+            else break;
+        }
+    }
+
+    fn move_up(self: *Editor) -> void {
+        if (self.cursor_row > 0) {
+            self.cursor_row -= 1;
+            self.clamp_col();
+        }
+    }
+
+    fn move_down(self: *Editor) -> void {
+        if (self.cursor_row < self.line_count - 1) {
+            self.cursor_row += 1;
+            self.clamp_col();
+        }
+    }
+
+    fn move_home(self: *Editor) -> void {
+        self.cursor_col = 0;
+    }
+
+    fn move_end(self: *Editor) -> void {
+        self.cursor_col = self.lines[self.cursor_row].len;
+    }
+
+    fn find_next(self: *Editor, query: str, from_row: usize, from_col: usize, out_row: *usize, out_col: *usize) -> bool {
+        if (query.len == 0) {
+            return false;
+        }
+        let qptr: *u8 = query.ptr as *u8;
+        let row: usize = from_row;
+        let col: usize = from_col;
+        let checked: usize = 0;
+        while (checked <= self.line_count) {
+            let found_col: usize = 0;
+            if (line_find(self.lines + row, qptr, query.len, col, &found_col)) {
+                out_row.* = row;
+                out_col.* = found_col;
+                return true;
+            }
+            row = (row + 1) % self.line_count;
+            col = 0;
+            checked += 1;
+        }
+        return false;
+    }
+}

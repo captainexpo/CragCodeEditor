@@ -1,0 +1,358 @@
+pub struct Vector2 {
+    x: f32,
+    y: f32,
+}
+
+pub struct Vector3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+pub struct Vector4 {
+    x: f32,
+    y: f32,
+    z: f32,
+    w: f32,
+}
+
+pub struct Rectangle {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+pub struct Color {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
+pub struct Camera2D {
+    offset: Vector2,
+    target: Vector2,
+    rotation: f32,
+    zoom: f32,
+}
+
+pub enum PixelFormat(i32) {
+    uncompressed_grayscale = 1,
+    uncompressed_gray_alpha = 2,
+    uncompressed_r5g6b5 = 3,
+    uncompressed_r8g8b8 = 4,
+    uncompressed_r5g5b5a1 = 5,
+    uncompressed_r4g4b4a4 = 6,
+    uncompressed_r8g8b8a8 = 7,
+    uncompressed_r32 = 8,
+    uncompressed_r32g32b32 = 9,
+    uncompressed_r32g32b32a32 = 10,
+    uncompressed_r16 = 11,
+    uncompressed_r16g16b16 = 12,
+    uncompressed_r16g16b16a16 = 13,
+    compressed_dxt1_rgb = 14,
+    compressed_dxt1_rgba = 15,
+    compressed_dxt3_rgba = 16,
+    compressed_dxt5_rgba = 17,
+    compressed_etc1_rgb = 18,
+    compressed_etc2_rgb = 19,
+    compressed_etc2_eac_rgba = 20,
+    compressed_pvrt_rgb = 21,
+    compressed_pvrt_rgba = 22,
+    compressed_astc_4x4_rgba = 23,
+    compressed_astc_8x8_rgba = 24,
+}
+
+
+pub struct Camera3D {
+    position: Vector3,
+    target: Vector3,
+    up: Vector3,
+    fovy: f32,
+    projection: i32,
+}
+
+pub struct Texture {
+     id: u32,
+    width: i32,
+    height: i32,
+    mipmaps: i32,
+    format: PixelFormat,
+}
+
+using Texture2D = Texture;
+
+pub struct Image {
+    data: *void,
+    width: i32,
+    height: i32,
+    mipmaps: i32,
+    format: PixelFormat,
+}
+
+pub struct Rectangle {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+pub struct GlyphInfo {
+    value: i32,
+    offsetX: i32,
+    offsetY: i32,
+    advanceX: i32,
+    image: Image,
+}
+
+pub struct Font {
+    baseSize: i32,
+    glyphCount: i32,
+    glyphPadding: i32,
+    texture: Texture2D,
+    recs: *Rectangle,
+    glyphs: *GlyphInfo,
+}
+
+pub extern fn InitWindow(width: i32, height: i32, title: *const u8) -> void;
+pub extern fn CloseWindow() -> void;
+pub extern fn WindowShouldClose() -> bool;
+
+pub extern fn IsWindowReady() -> bool;
+pub extern fn IsWindowFullscreen() -> bool;
+pub extern fn ToggleFullscreen() -> void;
+
+pub extern fn SetTargetFPS(fps: i32) -> void;
+pub extern fn GetFPS() -> i32;
+pub extern fn GetFrameTime() -> f32;
+pub extern fn GetTime() -> f64;
+
+pub extern fn GetScreenWidth() -> i32;
+pub extern fn GetScreenHeight() -> i32;
+
+pub extern fn GetMonitorCount() -> i32;
+pub extern fn GetMonitorWidth(monitor: i32) -> i32;
+pub extern fn GetMonitorHeight(monitor: i32) -> i32;
+pub extern fn GetMonitorRefreshRate(monitor: i32) -> i32;
+
+pub extern fn BeginDrawing() -> void;
+pub extern fn EndDrawing() -> void;
+
+pub extern fn ClearBackground(color: Color) -> void;
+
+pub extern fn DrawPixel(x: i32, y: i32, color: Color) -> void;
+pub extern fn DrawLine( startX: i32, startY: i32, endX: i32, endY: i32, color: Color) -> void;
+pub extern fn DrawCircle( centerX: i32, centerY: i32, radius: f32, color: Color) -> void;
+pub extern fn DrawRectangle( posX: i32, posY: i32, width: i32, height: i32, color: Color) -> void;
+pub extern fn DrawRectangleRec(rec: Rectangle, color: Color) -> void;
+pub extern fn DrawText( text: *const u8, posX: i32, posY: i32, fontSize: i32, color: Color) -> void;
+
+pub extern fn DrawLineEx(start: Vector2, end: Vector2, thick: f32, color: Color) -> void;
+
+pub extern fn MeasureText(text: *const u8, fontSize: i32) -> i32;
+
+pub extern fn IsKeyPressed(key: i32) -> bool;
+pub extern fn IsKeyDown(key: i32) -> bool;
+pub extern fn IsKeyReleased(key: i32) -> bool;
+
+pub extern fn IsMouseButtonPressed(button: i32) -> bool;
+pub extern fn IsMouseButtonDown(button: i32) -> bool;
+pub extern fn IsMouseButtonReleased(button: i32) -> bool;
+
+pub extern fn GetMouseX() -> i32;
+pub extern fn GetMouseY() -> i32;
+pub extern fn GetMousePosition() -> Vector2;
+
+
+pub extern fn BeginMode2D(camera: Camera2D) -> void;
+pub extern fn EndMode2D() -> void;
+
+pub extern fn BeginMode3D(camera: Camera3D) -> void;
+pub extern fn EndMode3D() -> void;
+
+pub extern fn WaitTime(s: f32) -> void;
+
+pub const LIGHTGRAY  = Color{ r: 200, g: 200, b: 200, a: 255 };
+pub const GRAY       = Color{ r: 130, g: 130, b: 130, a: 255 };
+pub const DARKGRAY   = Color{ r: 80,  g: 80,  b: 80,  a: 255 };
+
+pub const YELLOW     = Color{ r: 253, g: 249, b: 0,   a: 255 };
+pub const GOLD       = Color{ r: 255, g: 203, b: 0,   a: 255 };
+pub const ORANGE     = Color{ r: 255, g: 161, b: 0,   a: 255 };
+pub const PINK       = Color{ r: 255, g: 109, b: 194, a: 255 };
+
+pub const RED        = Color{ r: 230, g: 41,  b: 55,  a: 255 };
+pub const MAROON     = Color{ r: 190, g: 33,  b: 55,  a: 255 };
+
+pub const GREEN      = Color{ r: 0,   g: 228, b: 48,  a: 255 };
+pub const LIME       = Color{ r: 0,   g: 158, b: 47,  a: 255 };
+pub const DARKGREEN  = Color{ r: 0,   g: 117, b: 44,  a: 255 };
+
+pub const SKYBLUE    = Color{ r: 102, g: 191, b: 255, a: 255 };
+pub const BLUE       = Color{ r: 0,   g: 121, b: 241, a: 255 };
+pub const DARKBLUE   = Color{ r: 0,   g: 82,  b: 172, a: 255 };
+
+pub const PURPLE     = Color{ r: 200, g: 122, b: 255, a: 255 };
+pub const VIOLET     = Color{ r: 135, g: 60,  b: 190, a: 255 };
+pub const DARKPURPLE = Color{ r: 112, g: 31,  b: 126, a: 255 };
+
+pub const BEIGE      = Color{ r: 211, g: 176, b: 131, a: 255 };
+pub const BROWN      = Color{ r: 127, g: 106, b: 79,  a: 255 };
+pub const DARKBROWN  = Color{ r: 76,  g: 63,  b: 47,  a: 255 };
+
+pub const WHITE      = Color{ r: 255, g: 255, b: 255, a: 255 };
+pub const BLACK      = Color{ r: 0,   g: 0,   b: 0,   a: 255 };
+pub const BLANK      = Color{ r: 0,   g: 0,   b: 0,   a: 0   };
+
+pub const MAGENTA    = Color{ r: 255, g: 0,   b: 255, a: 255 };
+pub const RAYWHITE   = Color{ r: 245, g: 245, b: 245, a: 255 };
+
+pub enum ConfigFlags(i32) {
+    FLAG_VSYNC_HINT         = 0x00000040,   // Set to try enabling V-Sync on GPU
+    FLAG_FULLSCREEN_MODE    = 0x00000002,   // Set to run program in fullscreen
+    FLAG_WINDOW_RESIZABLE   = 0x00000004,   // Set to allow resizable window
+    FLAG_WINDOW_UNDECORATED = 0x00000008,   // Set to disable window decoration (frame and buttons)
+    FLAG_WINDOW_HIDDEN      = 0x00000080,   // Set to hide window
+    FLAG_WINDOW_MINIMIZED   = 0x00000200,   // Set to minimize window (iconify)
+    FLAG_WINDOW_MAXIMIZED   = 0x00000400,   // Set to maximize window (expanded to monitor)
+    FLAG_WINDOW_UNFOCUSED   = 0x00000800,   // Set to window non focused
+    FLAG_WINDOW_TOPMOST     = 0x00001000,   // Set to window always on top
+    FLAG_WINDOW_ALWAYS_RUN  = 0x00000100,   // Set to allow windows running while minimized
+    FLAG_WINDOW_TRANSPARENT = 0x00000010,   // Set to allow transparent framebuffer
+    FLAG_WINDOW_HIGHDPI     = 0x00002000,   // Set to support HighDPI
+    FLAG_WINDOW_MOUSE_PASSTHROUGH = 0x00004000, // Set to support mouse passthrough, only supported when FLAG_WINDOW_UNDECORATED
+    FLAG_BORDERLESS_WINDOWED_MODE = 0x00008000, // Set to run program in borderless windowed mode
+    FLAG_MSAA_4X_HINT       = 0x00000020,   // Set to try enabling MSAA 4X
+    FLAG_INTERLACED_HINT    = 0x00010000    // Set to try enabling interlaced video format (for V3D)
+}
+
+// Trace log level
+pub enum TraceLogLevel(i32) {
+    LOG_ALL = 0,
+    LOG_TRACE,
+    LOG_DEBUG,
+    LOG_INFO,
+    LOG_WARNING,
+    LOG_ERROR,
+    LOG_FATAL,
+    LOG_NONE
+}
+
+// Keyboard keys (US keyboard layout)
+pub enum Key (i32) {
+    NULL            = 0,        // Key: NULL, used for no key pressed
+    // Alphanumeric keys
+    APOSTROPHE      = 39,       // Key: '
+    COMMA           = 44,       // Key: ,
+    MINUS           = 45,       // Key: -
+    PERIOD          = 46,       // Key: .
+    SLASH           = 47,       // Key: /
+    ZERO            = 48,       // Key: 0
+    ONE             = 49,       // Key: 1
+    TWO             = 50,       // Key: 2
+    THREE           = 51,       // Key: 3
+    FOUR            = 52,       // Key: 4
+    FIVE            = 53,       // Key: 5
+    SIX             = 54,       // Key: 6
+    SEVEN           = 55,       // Key: 7
+    EIGHT           = 56,       // Key: 8
+    NINE            = 57,       // Key: 9
+    SEMICOLON       = 59,       // Key: ;
+    EQUAL           = 61,       // Key: =
+    A               = 65,       // Key: A | a
+    B               = 66,       // Key: B | b
+    C               = 67,       // Key: C | c
+    D               = 68,       // Key: D | d
+    E               = 69,       // Key: E | e
+    F               = 70,       // Key: F | f
+    G               = 71,       // Key: G | g
+    H               = 72,       // Key: H | h
+    I               = 73,       // Key: I | i
+    J               = 74,       // Key: J | j
+    K               = 75,       // Key: K | k
+    L               = 76,       // Key: L | l
+    M               = 77,       // Key: M | m
+    N               = 78,       // Key: N | n
+    O               = 79,       // Key: O | o
+    P               = 80,       // Key: P | p
+    Q               = 81,       // Key: Q | q
+    R               = 82,       // Key: R | r
+    S               = 83,       // Key: S | s
+    T               = 84,       // Key: T | t
+    U               = 85,       // Key: U | u
+    V               = 86,       // Key: V | v
+    W               = 87,       // Key: W | w
+    X               = 88,       // Key: X | x
+    Y               = 89,       // Key: Y | y
+    Z               = 90,       // Key: Z | z
+    LEFT_BRACKET    = 91,       // Key: [
+    BACKSLASH       = 92,       // Key: '\'
+    RIGHT_BRACKET   = 93,       // Key: ]
+    GRAVE           = 96,       // Key: `
+    // Function keys
+    SPACE           = 32,       // Key: Space
+    ESCAPE          = 256,      // Key: Esc
+    ENTER           = 257,      // Key: Enter
+    TAB             = 258,      // Key: Tab
+    BACKSPACE       = 259,      // Key: Backspace
+    INSERT          = 260,      // Key: Ins
+    DELETE          = 261,      // Key: Del
+    RIGHT           = 262,      // Key: Cursor right
+    LEFT            = 263,      // Key: Cursor left
+    DOWN            = 264,      // Key: Cursor down
+    UP              = 265,      // Key: Cursor up
+    PAGE_UP         = 266,      // Key: Page up
+    PAGE_DOWN       = 267,      // Key: Page down
+    HOME            = 268,      // Key: Home
+    END             = 269,      // Key: End
+    CAPS_LOCK       = 280,      // Key: Caps lock
+    SCROLL_LOCK     = 281,      // Key: Scroll down
+    NUM_LOCK        = 282,      // Key: Num lock
+    PRINT_SCREEN    = 283,      // Key: Print screen
+    PAUSE           = 284,      // Key: Pause
+    F1              = 290,      // Key: F1
+    F2              = 291,      // Key: F2
+    F3              = 292,      // Key: F3
+    F4              = 293,      // Key: F4
+    F5              = 294,      // Key: F5
+    F6              = 295,      // Key: F6
+    F7              = 296,      // Key: F7
+    F8              = 297,      // Key: F8
+    F9              = 298,      // Key: F9
+    F10             = 299,      // Key: F10
+    F11             = 300,      // Key: F11
+    F12             = 301,      // Key: F12
+    LEFT_SHIFT      = 340,      // Key: Shift left
+    LEFT_CONTROL    = 341,      // Key: Control left
+    LEFT_ALT        = 342,      // Key: Alt left
+    LEFT_SUPER      = 343,      // Key: Super left
+    RIGHT_SHIFT     = 344,      // Key: Shift right
+    RIGHT_CONTROL   = 345,      // Key: Control right
+    RIGHT_ALT       = 346,      // Key: Alt right
+    RIGHT_SUPER     = 347,      // Key: Super right
+    KB_MENU         = 348,      // Key: KB menu
+    // Keypad keys
+    KP_0            = 320,      // Key: Keypad 0
+    KP_1            = 321,      // Key: Keypad 1
+    KP_2            = 322,      // Key: Keypad 2
+    KP_3            = 323,      // Key: Keypad 3
+    KP_4            = 324,      // Key: Keypad 4
+    KP_5            = 325,      // Key: Keypad 5
+    KP_6            = 326,      // Key: Keypad 6
+    KP_7            = 327,      // Key: Keypad 7
+    KP_8            = 328,      // Key: Keypad 8
+    KP_9            = 329,      // Key: Keypad 9
+    KP_DECIMAL      = 330,      // Key: Keypad .
+    KP_DIVIDE       = 331,      // Key: Keypad /
+    KP_MULTIPLY     = 332,      // Key: Keypad *
+    KP_SUBTRACT     = 333,      // Key: Keypad -
+    KP_ADD          = 334,      // Key: Keypad +
+    KP_ENTER        = 335,      // Key: Keypad Enter
+    KP_EQUAL        = 336,      // Key: Keypad =
+    // Android key buttons
+    BACK            = 4,        // Key: Android back button
+    MENU            = 5,        // Key: Android menu button
+    VOLUME_UP       = 24,       // Key: Android volume up button
+    VOLUME_DOWN     = 25        // Key: Android volume down button
+}

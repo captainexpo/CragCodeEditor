@@ -1,0 +1,170 @@
+import "raylib" as rl;
+import "stdlib" as std;
+
+pub extern fn GetCharPressed() -> i32;
+pub extern fn IsKeyPressedRepeat(key: i32) -> bool;
+pub extern fn SetExitKey(key: i32) -> void;
+pub extern fn GetMouseWheelMove() -> f32;
+pub extern fn SetClipboardText(text: *const u8) -> void;
+pub extern fn GetClipboardText() -> *const u8;
+pub extern fn SetConfigFlags(flags: i32) -> void;
+pub extern fn DrawRectangleLines(posX: i32, posY: i32, width: i32, height: i32, color: rl.Color) -> void;
+
+pub extern fn LoadFontEx(fileName: *const u8, fontSize: i32, fontChars: *const i32, charsCount: i32) -> rl.Font;
+pub extern fn UnloadFont(font: rl.Font) -> void;
+pub extern fn DrawTextEx(font: rl.Font, text: *const u8, position: rl.Vector2, fontSize: f32, spacing: f32, tint: rl.Color) -> void;
+pub extern fn MeasureTextEx(font: rl.Font, text: *const u8, fontSize: f32, spacing: f32) -> rl.Vector2;
+
+pub struct Font {
+    handle: *rl.Font,
+
+    fn load(self: *Font, path: str, size: i32) -> void {
+        self.handle = std.cstdlib.malloc(sizeof(rl.Font)) as *rl.Font;
+        const cstr =std.string.c_str(path);
+        std.cstdio.printf("Loading font: %s\n", cstr);
+        self.handle.* = LoadFontEx(cstr, size, null, 0);
+    }
+
+    fn unload(self: *Font) -> void {
+        UnloadFont(self.handle.*);
+        self.handle = null;
+    }
+
+    fn draw_text(self: *Font, text: *const u8, x: f32, y: f32, size: f32, spacing: f32, color: rl.Color) -> void {
+        let position = rl.Vector2 { x: x, y: y };
+        DrawTextEx(self.handle.*, text, position, size, spacing, color);
+    }
+
+    fn measure_width(self: *Font, text: *const u8, size: f32, spacing: f32) -> i32 {
+        let size: rl.Vector2 = MeasureTextEx(self.handle.*, text, size, spacing);
+        return size.x as i32;
+    }
+}
+
+pub struct TextInput {
+    text: *u8,
+    len: usize,
+    cap: usize,
+    cursor: usize,
+    active: bool,
+
+    fn init(self: *TextInput) -> void {
+        self.cap = 32;
+        self.len = 0;
+        self.cursor = 0;
+        self.active = false;
+        self.text = std.cstdlib.malloc(self.cap) as *u8;
+        self.text[0] = 0;
+    }
+
+    fn ensure_capacity(self: *TextInput, needed: usize) -> void {
+        if (needed < self.cap) {
+            return;
+        }
+        let new_cap: usize = self.cap;
+        while (new_cap <= needed) {
+            new_cap *= 2;
+        }
+        self.text = std.cstdlib.realloc(self.text as *void, new_cap) as *u8;
+        self.cap = new_cap;
+    }
+
+    fn clear(self: *TextInput) -> void {
+        self.len = 0;
+        self.cursor = 0;
+        self.text[0] = 0;
+    }
+
+    // Clears the box and gives it focus. Called when a keybind (e.g.
+    // Ctrl+F) summons the box.
+    fn open(self: *TextInput) -> void {
+        self.clear();
+        self.active = true;
+    }
+
+    fn close(self: *TextInput) -> void {
+        self.active = false;
+    }
+
+    fn insert_char(self: *TextInput, ch: u8) -> void {
+        self.ensure_capacity(self.len + 2);
+        std.cstring.memmove((self.text + self.cursor + 1) as *void, (self.text + self.cursor) as *void, self.len - self.cursor + 1);
+        self.text[self.cursor] = ch;
+        self.len += 1;
+        self.cursor += 1;
+    }
+
+    fn backspace(self: *TextInput) -> void {
+        if (self.cursor == 0) {
+            return;
+        }
+        std.cstring.memmove((self.text + self.cursor - 1) as *void, (self.text + self.cursor) as *void, self.len - self.cursor + 1);
+        self.len -= 1;
+        self.cursor -= 1;
+    }
+
+    fn delete_forward(self: *TextInput) -> void {
+        if (self.cursor >= self.len) {
+            return;
+        }
+        std.cstring.memmove((self.text + self.cursor) as *void, (self.text + self.cursor + 1) as *void, self.len - self.cursor);
+        self.len -= 1;
+    }
+
+    fn move_left(self: *TextInput) -> void {
+        if (self.cursor > 0) {
+            self.cursor -= 1;
+        }
+    }
+
+    fn move_right(self: *TextInput) -> void {
+        if (self.cursor < self.len) {
+            self.cursor += 1;
+        }
+    }
+
+    fn move_home(self: *TextInput) -> void {
+        self.cursor = 0;
+    }
+
+    fn move_end(self: *TextInput) -> void {
+        self.cursor = self.len;
+    }
+
+    fn as_str(self: *TextInput) -> str {
+        return newstr(self.text, self.len);
+    }
+
+    fn free(self: *TextInput) -> void {
+        if (self.text != null) {
+            std.cstdlib.free(self.text as *void);
+            self.text = null;
+        }
+        self.len = 0;
+        self.cap = 0;
+    }
+
+    // Draws a bordered box with an optional label prefix (e.g. "Find: "),
+    // the current text, and a caret. `show_cursor` lets the caller drive
+    // blinking the same way the editor's own caret blinks.
+    fn draw(self: *TextInput, font: *Font, x: f32, y: f32, w: f32, h: f32, label: *const u8, bg_color: rl.Color, border_color: rl.Color, text_color: rl.Color, cursor_color: rl.Color, font_size: f32, spacing: f32, show_cursor: bool) -> void {
+        rl.DrawRectangle(x as i32, y as i32, w as i32, h as i32, bg_color);
+        DrawRectangleLines(x as i32, y as i32, w as i32, h as i32, border_color);
+
+        let pad: f32 = 6.0;
+        let label_w: i32 = font.measure_width(label, font_size, spacing);
+        font.draw_text(label, x + pad, y + pad, font_size, spacing, text_color);
+
+        let text_x: f32 = x + pad + (label_w as f32) + 6.0;
+        font.draw_text(self.text, text_x, y + pad, font_size, spacing, text_color);
+
+        if (show_cursor) {
+            let saved: u8 = self.text[self.cursor];
+            self.text[self.cursor] = 0;
+            let prefix_w: i32 = font.measure_width(self.text, font_size, spacing);
+            self.text[self.cursor] = saved;
+            let cx: f32 = text_x + (prefix_w as f32);
+            rl.DrawRectangle(cx as i32, (y + pad - 2.0) as i32, 2, (font_size + 4.0) as i32, cursor_color);
+        }
+    }
+}
