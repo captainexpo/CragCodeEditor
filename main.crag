@@ -45,7 +45,7 @@ fn col_for_x(line: *ed.Line, target_x: i32, font: *ui.Font) -> usize {
 const crag_keywords: []str = {
     "fn", "let", "const", "if", "else", "while", "for", "return", "break", "continue",
     "struct", "enum", "union", "pub", "true", "false", "null", "import", "as",
-    "try", "catch", "switch", "case"
+    "try", "catch", "switch", "case", "extern"
 };
 
 const crag_builtins: []str = {
