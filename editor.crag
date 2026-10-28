@@ -60,8 +60,6 @@ pub struct Line {
         return tail;
     }
 
-    // Consumes `other`: frees its buffer once merged, since callers only ever
-    // pass in a Line that was just removed from the editor's line array.
     fn append_text(self: *Line, other: *Line) -> void {
         self.ensure_capacity(self.len + other.len + 1);
         if (other.len > 0) {
@@ -146,6 +144,7 @@ fn line_find(line: *Line, query: *u8, query_len: usize, start_col: usize, out_co
     }
     return false;
 }
+
 
 pub struct Editor {
     lines: *Line,

@@ -1,5 +1,5 @@
 import "raylib" as rl;
-import "stdlib" as std;
+import "stdlib" as std { string { concat } };
 import "ui.crag" as ui;
 import "editor.crag" as ed;
 import "pair.crag" as pair;
@@ -53,11 +53,11 @@ const crag_builtins: []str = {
 };
 
 const crag_types: []str = {
-    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "usize",
+    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "usize", "isize",
     "bool", "str", "void"
 };
 
-const kw_to_color: []pair.Pair::<[]str, rl.Color> = {
+let kw_to_color: []pair.Pair<[]str, rl.Color> = {
     pair.new(crag_keywords, rl.Color{ r: 224, g: 110, b: 150, a: 255 }),
     pair.new(crag_builtins, rl.Color{ r: 224, g: 110, b: 150, a: 255 }),
     pair.new(crag_types, rl.Color{ r: 255, g: 148, b: 130, a: 255 })
@@ -238,9 +238,9 @@ fn handle_find_box(find_box: *ui.TextInput, editor: *ed.Editor, mouse_x: i32, mo
     }
 }
 
-pub fn main(args: []*u8) -> i32 {
+pub fn main() -> i32 {
     ui.SetConfigFlags(rl.ConfigFlags:FLAG_WINDOW_RESIZABLE);
-    rl.InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Crag Editor");
+    rl.InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Code Editor");
     rl.SetTargetFPS(60);
     ui.SetExitKey(0);
 
@@ -253,9 +253,9 @@ pub fn main(args: []*u8) -> i32 {
         edit_version: 0,
     };
 
+    let args: []str = std.process.args_alloc();
     if (args.len > 1) {
-        let filename: *const u8 = args[1];
-        FILE_PATH = newstr(filename, std.cstring.strlen(filename));
+        FILE_PATH = args[1];
     }
 
     editor.init();
@@ -485,7 +485,7 @@ pub fn main(args: []*u8) -> i32 {
             if (row == editor.cursor_row && show_cursor) {
                 let prefix_w: i32 = measure_prefix_width(line, editor.cursor_col, &font);
                 let cx: i32 = GUTTER_WIDTH + 8 + prefix_w;
-                rl.DrawRectangle(cx, y, 2, LINE_HEIGHT - 2, rl.YELLOW);
+                rl.DrawRectangle(cx, y, 3, LINE_HEIGHT - 2, rl.GRAY);
             }
 
             row += 1;
@@ -495,10 +495,16 @@ pub fn main(args: []*u8) -> i32 {
         rl.DrawRectangle(0, screen_h - STATUS_HEIGHT, screen_w, STATUS_HEIGHT, panel_color);
 
         let dirty_marker: str = "";
-        if (editor.dirty) {
+        if (editor.dirty)
             dirty_marker = "*";
-        }
-        let status: str = FILE_PATH + dirty_marker + "   Ln " + std.string.tostring(editor.cursor_row + 1) + ", Col " + std.string.tostring(editor.cursor_col + 1) + "   Ctrl+S save  Ctrl+Z/Y undo/redo  Ctrl+C/X/V copy/cut/paste  Ctrl+-/= font size  Ctrl+F find";
+
+        let status: str = string.concat(FILE_PATH, dirty_marker);
+        status = string.concat(status, "  Ln ");
+        status = string.concat(status, std.string.tostring(editor.cursor_row + 1));
+        status = string.concat(status, ", Col ");
+        status = string.concat(status, std.string.tostring(editor.cursor_col + 1));
+        status = string.concat(status, "   Ctrl+S save  Ctrl+Z/Y undo/redo  Ctrl+C/X/V copy/cut/paste  Ctrl+-/= font size  Ctrl+F find");
+
         status_font.draw_text(status, 8, (screen_h - STATUS_HEIGHT + 6) as f32, STATUS_FONT_SIZE as f32, FONT_SPACING, light_gray_color);
 
         if (find_box.active) {
